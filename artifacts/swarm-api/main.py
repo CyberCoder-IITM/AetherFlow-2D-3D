@@ -171,11 +171,61 @@ async def tick():
         removed = drones.pop()
         log_event(f"[FLEET] {removed['id']} recalled")
 
-    # Pre-populate with cells of truly immovable drones (dead / EMP recovery)
-    # so no drone can step onto them.  Moving drones are NOT pre-blocked here;
-    # they claim / release cells below as they execute their step.
+    # ── Pre-pass: build collision yield set ─────────────────────────────────
+    # Snapshot current grid positions and intended next cells for every drone.
+    snap_cell: dict[str, tuple[int, int]] = {
+        d["id"]: (round(d["x"]), round(d["y"])) for d in drones
+    }
+    snap_next: dict[str, tuple[int, int]] = {}
+    for d in drones:
+        if d["path"] and d["path_index"] < len(d["path"]):
+            snap_next[d["id"]] = d["path"][d["path_index"]]
+
+    def drone_num(did: str) -> int:
+        return int(did.split("-")[1])
+
+    # yield_set: IDs that must skip movement this tick
+    yield_set: set[str] = set()
+
+    # 1. Swap / head-on detection:
+    #    Drone A at cell X wants cell Y, Drone B at cell Y wants cell X
+    #    → they would ghost through each other.  Higher drone number yields.
+    for i, da in enumerate(drones):
+        if da["id"] in yield_set:
+            continue
+        nc_a = snap_next.get(da["id"])
+        if nc_a is None:
+            continue
+        for db in drones[i + 1:]:
+            if db["id"] in yield_set:
+                continue
+            nc_b = snap_next.get(db["id"])
+            if nc_b is None:
+                continue
+            # Swap condition
+            if snap_cell[da["id"]] == nc_b and snap_cell[db["id"]] == nc_a:
+                loser = db["id"] if drone_num(da["id"]) < drone_num(db["id"]) else da["id"]
+                yield_set.add(loser)
+
+    # 2. Physical proximity guard (catches fractional mid-cell phasethrough):
+    #    If two drones are already within 0.75 cells of each other, the
+    #    higher-numbered one must stop until they separate.
+    MIN_SEP_SQ = 0.5625  # 0.75 ** 2
+    for i, da in enumerate(drones):
+        if da["id"] in yield_set:
+            continue
+        for db in drones[i + 1:]:
+            if db["id"] in yield_set:
+                continue
+            ddx = da["x"] - db["x"]
+            ddy = da["y"] - db["y"]
+            if ddx * ddx + ddy * ddy < MIN_SEP_SQ:
+                loser = db["id"] if drone_num(da["id"]) < drone_num(db["id"]) else da["id"]
+                yield_set.add(loser)
+
+    # ── Pre-populate reserved_next with immovable drones ────────────────────
     reserved_next: dict[tuple[int, int], str] = {
-        (round(d["x"]), round(d["y"])): d["id"]
+        snap_cell[d["id"]]: d["id"]
         for d in drones
         if d["battery"] <= 0 or d.get("emp_recovery", 0) > 0
     }
@@ -193,12 +243,12 @@ async def tick():
 
         if drone["status"] in ("delivering", "routing", "emp"):
             drain = 0.035 * speed_mult
-            if (round(drone["x"]), round(drone["y"])) in weather_cells:
+            if snap_cell[drone["id"]] in weather_cells:
                 drain *= 2.2
             drone["battery"] = max(0, round(drone["battery"] - drain, 2))
 
         if not drone["path"] or drone["path_index"] >= len(drone["path"]):
-            start = (round(drone["x"]), round(drone["y"]))
+            start = snap_cell[drone["id"]]
             drone["path"] = astar(start, drone["target"])
             drone["path_index"] = 0
             if drone["path"]:
@@ -218,16 +268,23 @@ async def tick():
             replan_drone(drone, f"Obstacle at {chr(65+next_cell[0])}{next_cell[1]}")
             continue
 
-        # Block if another drone occupies or is moving to next_cell
+        # Yield if flagged by pre-pass (swap or proximity)
+        if drone["id"] in yield_set:
+            drone["collisions_avoided"] += 1
+            collision_avoided += 1
+            log_event(f"[{drone['id']}] Yielding at {chr(65+snap_cell[drone['id']][0])}{snap_cell[drone['id']][1]}")
+            continue
+
+        # Block if another drone already claimed this cell this tick
         occupant = reserved_next.get(next_cell)
         if occupant and occupant != drone["id"]:
             drone["collisions_avoided"] += 1
             collision_avoided += 1
-            log_event(f"[{drone['id']}] Yielding at {chr(65+round(drone['x']))}{round(drone['y'])}")
+            log_event(f"[{drone['id']}] Yielding at {chr(65+snap_cell[drone['id']][0])}{snap_cell[drone['id']][1]}")
             continue
 
-        # Release current cell so followers can enter it; claim next cell
-        curr_cell = (round(drone["x"]), round(drone["y"]))
+        # Claim next cell, release current cell
+        curr_cell = snap_cell[drone["id"]]
         reserved_next.pop(curr_cell, None)
         reserved_next[next_cell] = drone["id"]
 
