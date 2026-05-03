@@ -171,7 +171,14 @@ async def tick():
         removed = drones.pop()
         log_event(f"[FLEET] {removed['id']} recalled")
 
-    reserved_next: dict[tuple[int, int], str] = {}
+    # Pre-populate with cells of truly immovable drones (dead / EMP recovery)
+    # so no drone can step onto them.  Moving drones are NOT pre-blocked here;
+    # they claim / release cells below as they execute their step.
+    reserved_next: dict[tuple[int, int], str] = {
+        (round(d["x"]), round(d["y"])): d["id"]
+        for d in drones
+        if d["battery"] <= 0 or d.get("emp_recovery", 0) > 0
+    }
 
     for drone in drones:
         # EMP recovery
@@ -211,12 +218,17 @@ async def tick():
             replan_drone(drone, f"Obstacle at {chr(65+next_cell[0])}{next_cell[1]}")
             continue
 
-        if next_cell in reserved_next:
+        # Block if another drone occupies or is moving to next_cell
+        occupant = reserved_next.get(next_cell)
+        if occupant and occupant != drone["id"]:
             drone["collisions_avoided"] += 1
             collision_avoided += 1
             log_event(f"[{drone['id']}] Yielding at {chr(65+round(drone['x']))}{round(drone['y'])}")
             continue
 
+        # Release current cell so followers can enter it; claim next cell
+        curr_cell = (round(drone["x"]), round(drone["y"]))
+        reserved_next.pop(curr_cell, None)
         reserved_next[next_cell] = drone["id"]
 
         tx, ty = next_cell

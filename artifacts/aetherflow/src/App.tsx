@@ -599,7 +599,7 @@ function Uptime({ seconds, color }: { seconds: number; color: string }) {
 function RightPanel({
   state, theme, selectedDrone, onSelectDrone, onChaos, onClearObs, onPauseResume,
   speedMult, onSpeedChange, fleetSize, onFleetChange, chaosIntensity, onChaosIntensityChange,
-  effHistory, logEndRef, isMobile, onClose,
+  effHistory, logEndRef, isMobile, onClose, panelWidth,
 }: {
   state: SimState | null; theme: Theme; selectedDrone: string | null;
   onSelectDrone: (id: string | null) => void; onChaos: (t: string) => void;
@@ -608,7 +608,7 @@ function RightPanel({
   fleetSize: number; onFleetChange: (v: number) => void;
   chaosIntensity: number; onChaosIntensityChange: (v: number) => void;
   effHistory: number[]; logEndRef: React.RefObject<HTMLDivElement | null>;
-  isMobile: boolean; onClose?: () => void;
+  isMobile: boolean; onClose?: () => void; panelWidth?: number;
 }) {
   const stats = state?.stats;
   const sortedDrones = useMemo(() =>
@@ -625,7 +625,7 @@ function RightPanel({
       backgroundColor: theme.panelBg,
       borderLeftWidth: isMobile ? 0 : 1, borderTopWidth: isMobile ? 1 : 0,
       borderStyle: "solid", borderColor: theme.panelBorder,
-      width: isMobile ? "100%" : "272px",
+      width: isMobile ? "100%" : (panelWidth ?? 272),
       maxHeight: isMobile ? "72vh" : "100%",
     }}>
       {/* Fixed mobile header */}
@@ -789,11 +789,18 @@ export default function App() {
   const [fleetSize, setFleetSize] = useState(8);
   const [effHistory, setEffHistory] = useState<number[]>([]);
   const [themeKey, setThemeKey] = useState<ThemeKey>(() => (localStorage.getItem("af-theme") as ThemeKey) || "cyber");
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const saved = localStorage.getItem("af-panel-w");
+    return saved ? Math.max(200, Math.min(540, parseInt(saved))) : 272;
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const prevDeliveriesRef = useRef(0);
   const speedDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fleetDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDraggingPanel = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartW = useRef(272);
   const isMobile = useIsMobile();
   const { beep } = useSound(soundEnabled);
   const { isFs, toggle: toggleFs } = useFullscreen();
@@ -1052,14 +1059,48 @@ export default function App() {
           )}
         </div>
 
-        {/* Desktop Panel */}
+        {/* Desktop Panel — resizable */}
         {!isMobile && (
-          <RightPanel state={state} theme={theme} selectedDrone={selectedDrone} onSelectDrone={setSelectedDrone}
-            onChaos={handleChaos} onClearObs={() => fetch(`${API}/obstacles`, { method: "DELETE" })}
-            onPauseResume={handlePauseResume} speedMult={speedMult} onSpeedChange={handleSpeedChange}
-            fleetSize={fleetSize} onFleetChange={handleFleetChange} chaosIntensity={chaosIntensity}
-            onChaosIntensityChange={setChaosIntensity} effHistory={effHistory} logEndRef={logEndRef}
-            isMobile={false} />
+          <div className="relative flex-shrink-0 flex" style={{ width: panelWidth }}>
+            {/* Drag handle on left edge */}
+            <div
+              className="absolute left-0 top-0 h-full z-20 flex items-center"
+              style={{ width: 10, cursor: "col-resize" }}
+              onPointerDown={(e) => {
+                isDraggingPanel.current = true;
+                dragStartX.current = e.clientX;
+                dragStartW.current = panelWidth;
+                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                document.body.style.cursor = "col-resize";
+                document.body.style.userSelect = "none";
+              }}
+              onPointerMove={(e) => {
+                if (!isDraggingPanel.current) return;
+                const delta = dragStartX.current - e.clientX;
+                const newW = Math.max(200, Math.min(540, dragStartW.current + delta));
+                setPanelWidth(newW);
+                localStorage.setItem("af-panel-w", String(newW));
+              }}
+              onPointerUp={() => {
+                isDraggingPanel.current = false;
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+              }}
+            >
+              {/* Visual indicator */}
+              <div
+                className="h-full transition-opacity opacity-0 hover:opacity-100 active:opacity-100"
+                style={{ width: 3, marginLeft: 3, backgroundColor: theme.primary + "60",
+                  boxShadow: `0 0 6px ${theme.primary}60` }}
+              />
+            </div>
+            <RightPanel state={state} theme={theme} selectedDrone={selectedDrone} onSelectDrone={setSelectedDrone}
+              onChaos={handleChaos} onClearObs={() => fetch(`${API}/obstacles`, { method: "DELETE" })}
+              onPauseResume={handlePauseResume} speedMult={speedMult} onSpeedChange={handleSpeedChange}
+              fleetSize={fleetSize} onFleetChange={handleFleetChange} chaosIntensity={chaosIntensity}
+              onChaosIntensityChange={setChaosIntensity} effHistory={effHistory} logEndRef={logEndRef}
+              isMobile={false} panelWidth={panelWidth} />
+          </div>
         )}
       </div>
 
