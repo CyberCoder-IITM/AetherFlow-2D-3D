@@ -145,7 +145,13 @@ init_drones()
 def replan_drone(drone: dict, reason: str = "obstacle"):
     start = (round(drone["x"]), round(drone["y"]))
     goal = drone["target"]
-    reserved = {(round(o["x"]), round(o["y"])) for o in drones if o["id"] != drone["id"]}
+    reserved = set()
+    for other in drones:
+        if other["id"] == drone["id"]:
+            continue
+        reserved.add((round(other["x"]), round(other["y"])))
+        if other.get("path") and other.get("path_index", 0) < len(other["path"]):
+            reserved.update(other["path"][other["path_index"] : other["path_index"] + 5])
     new_path = astar(start, goal, reserved)
     if new_path:
         drone["path"] = new_path
