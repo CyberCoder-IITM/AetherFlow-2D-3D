@@ -1,0 +1,45 @@
+kind = "web"
+previewPath = "/"
+title = "AetherFlow"
+version = "1.0.0"
+id = "artifacts/aetherflow"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22194
+
+[services.development]
+run = "pnpm --filter @workspace/aetherflow run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/aetherflow", "run", "build" ]
+publicDir = "artifacts/aetherflow/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22194"
+BASE_PATH = "/"
+
+[[services]]
+name = "swarm-api"
+paths = [ "/swarm-api", "/swarm-api/ws" ]
+localPort = 8000
+
+[services.development]
+run = "PORT=8000 BASE_PATH=/swarm-api python /home/runner/workspace/artifacts/swarm-api/main.py"
+
+[services.production]
+
+[services.env]
+PORT = "8000"
+BASE_PATH = "/swarm-api"
