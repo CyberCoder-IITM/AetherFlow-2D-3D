@@ -269,7 +269,8 @@ async def simulation_loop():
                 except Exception:
                     dead.append(ws)
             for ws in dead:
-                state_subscribers.remove(ws)
+                if ws in state_subscribers:
+                    state_subscribers.remove(ws)
         await asyncio.sleep(0.1)
 
 
