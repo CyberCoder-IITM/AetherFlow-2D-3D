@@ -28,3 +28,5 @@ AetherFlow is a cyber-industrial logistics digital twin dashboard.
 ## Preview
 
 Open the AetherFlow app in the preview pane to watch the swarm move in real time.
+
+Built with passion.
